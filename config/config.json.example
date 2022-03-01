@@ -1,0 +1,15 @@
+{
+  "main": {
+    "port": "8000",
+    "log_type": "FILE",
+    "log_level": "debug",
+    "log_file": "tmp/console.log",
+    "redis": "enabled",
+    "api_cdr_url": "https://webhook.pusher"
+  },
+  "redis": {
+    "address": "localhost:6379",
+    "database": 0,
+    "password": ""
+  }
+}
