@@ -140,11 +140,17 @@ func (s *Cdr) HandlePostXmlToAPI(cdr []byte) error {
 		}
 		return err
 	} else if (res.StatusCode() != http.StatusCreated) && (res.StatusCode() != http.StatusOK) {
-		if err := s.HandleUpdateCdrRedis(cdrUuid, ""); err != nil {
-			log.Error("Update CDR err : ", err)
-		}
-		if err := s.saveCdrToFile(cdrUuid, cdr); err != nil {
-			log.Error("Write CDR err : ", err)
+		if res.StatusCode() == http.StatusUnprocessableEntity {
+			if err := redis.Redis.HDel(CDR_FAIL_LIST, cdrUuid); err != nil {
+				log.Error("HMDel CDR err : ", err)
+			}
+		} else {
+			if err := s.HandleUpdateCdrRedis(cdrUuid, ""); err != nil {
+				log.Error("Update CDR err : ", err)
+			}
+			if err := s.saveCdrToFile(cdrUuid, cdr); err != nil {
+				log.Error("Write CDR err : ", err)
+			}
 		}
 		return errors.New("post fail")
 	} else {
