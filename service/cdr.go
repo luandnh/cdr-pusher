@@ -78,7 +78,6 @@ func (s *Cdr) HandlePushCdr() {
 					log.Error("Pusher loi: ", err.Error())
 					sendMail(uuid, err.Error())
 					prevUUid = uuid
-					countPusher = 0
 				}
 			}
 			if err := s.HandleUpdateCdrRedis(uuid, value); err != nil {
@@ -129,7 +128,8 @@ func (s *Cdr) HandlePostXmlToAPI(cdr []byte) (int64, error) {
 	mv, err := mxj.NewMapXml(cdr)
 	if err != nil {
 		log.Error("Body to Map err: ", err)
-		return countPusher + 1, err
+		countPusher = countPusher + 1
+		return countPusher, err
 	} else {
 		variables, err := mv.ValueForKey("variables")
 		if err != nil {
@@ -156,7 +156,8 @@ func (s *Cdr) HandlePostXmlToAPI(cdr []byte) (int64, error) {
 		if err := s.saveCdrToFile(cdrUuid, cdr); err != nil {
 			log.Error("Write CDR err : ", err)
 		}
-		return countPusher + 1, err
+		countPusher = countPusher + 1
+		return countPusher, err
 	} else if (res.StatusCode() != http.StatusCreated) && (res.StatusCode() != http.StatusOK) {
 		if res.StatusCode() == http.StatusUnprocessableEntity {
 			if err := redis.Redis.HDel(CDR_FAIL_LIST, cdrUuid); err != nil {
@@ -170,7 +171,8 @@ func (s *Cdr) HandlePostXmlToAPI(cdr []byte) (int64, error) {
 				log.Error("Write CDR err : ", err)
 			}
 		}
-		return countPusher + 1, errors.New("post fail")
+		countPusher = countPusher + 1
+		return countPusher, errors.New("post fail")
 	} else {
 		return countPusher, nil
 	}
