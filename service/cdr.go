@@ -78,6 +78,7 @@ func (s *Cdr) HandlePushCdr() {
 					log.Error("Pusher loi: ", err.Error())
 					sendMail(uuid, err.Error())
 					prevUUid = uuid
+					countPusher = 0
 				}
 			}
 			if err := s.HandleUpdateCdrRedis(uuid, value); err != nil {
