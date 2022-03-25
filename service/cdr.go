@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/smtp"
 	"os"
 	"time"
 
@@ -33,14 +34,23 @@ func NewCdr(apiCdrUrl string) ICdr {
 	}
 }
 
+var (
+	SMTP_SERVER    = "smtp.gmail.com"
+	SMTP_USERNAME  string
+	SMTP_PASSWORD  string
+	SMTP_RECEIVERS []string
+)
+
 const (
-	CDR_FAIL_LIST = "cdr_fail_list"
-	CDR_FAIL_DIR  = "tmp/fail/"
+	CDR_FAIL_LIST  = "cdr_fail_list"
+	CDR_FAIL_DIR   = "tmp/fail/"
+	END_OF_MESSAGE = "\r\n"
 )
 
 var ctxBg = context.Background()
 
 func (s *Cdr) HandlePushCdr() {
+	listUuidFail := make([]string, 0)
 	listCdr, err := redis.Redis.HGetAll(CDR_FAIL_LIST)
 	if err != nil {
 		log.Error("Get list cdr failed: ", err)
@@ -56,15 +66,21 @@ func (s *Cdr) HandlePushCdr() {
 			continue
 		} else if cdrBytes == nil {
 			log.Error("Get cdr failed: nil")
-			if err := s.HandleUpdateCdrRedis(uuid, value); err != nil {
+			failCount, err := s.HandleUpdateCdrRedis(uuid, value)
+			if err != nil {
 				log.Error("Update CDR err : ", err)
+			} else if failCount > 5 {
+				listUuidFail = append(listUuidFail, fmt.Sprintf("uuid : %s - total pushed : %d"+END_OF_MESSAGE, uuid, failCount))
 			}
 			continue
 		}
 		if err := s.HandlePostXmlToAPI(cdrBytes); err != nil {
 			log.Error("Post cdr failed err : ", err)
-			if err := s.HandleUpdateCdrRedis(uuid, value); err != nil {
+			failCount, err := s.HandleUpdateCdrRedis(uuid, value)
+			if err != nil {
 				log.Error("Update CDR err : ", err)
+			} else if failCount > 5 {
+				listUuidFail = append(listUuidFail, fmt.Sprintf("uuid : %s - total pushed : %d"+END_OF_MESSAGE, uuid, failCount))
 			}
 			continue
 		} else {
@@ -75,20 +91,32 @@ func (s *Cdr) HandlePushCdr() {
 					log.Error("Del CDR err : ", err)
 				}
 			}
-
 		}
 	}
+	var msg string
+	if len(listUuidFail) > 0 {
+		for _, value := range listUuidFail {
+			msg += value
+		}
+		if msg != "" {
+			if err := sendMail(msg); err != nil {
+				log.Info("Err send mail ", err)
+			}
+		}
+	}
+	listUuidFail = nil
 }
 
-func (s *Cdr) HandleUpdateCdrRedis(uuid string, value string) error {
-	if len(uuid) < 1 {
-		return errors.New("uuid is nil")
-	}
+func (s *Cdr) HandleUpdateCdrRedis(uuid string, value string) (int, error) {
 	cdrRedis := new(model.CdrRedis)
+	if len(uuid) < 1 {
+		return cdrRedis.FailedCount, errors.New("uuid is nil")
+	}
+
 	if len(value) > 0 {
 		if err := json.Unmarshal([]byte(value), cdrRedis); err != nil {
 			log.Error("Unmarshal CDR err : ", err)
-			return err
+			return cdrRedis.FailedCount, err
 		}
 	}
 	cdrRedis.FailedCount += 1
@@ -96,14 +124,14 @@ func (s *Cdr) HandleUpdateCdrRedis(uuid string, value string) error {
 	val, err := json.Marshal(cdrRedis)
 	if err != nil {
 		log.Error("Marshal CDR err : ", err)
-		return err
+		return cdrRedis.FailedCount, err
 	}
 	data := []interface{}{uuid, string(val)}
 	if _, err := redis.Redis.HSet(CDR_FAIL_LIST, data); err != nil {
 		log.Error("HSet CDR err : ", err)
-		return err
+		return cdrRedis.FailedCount, err
 	}
-	return nil
+	return cdrRedis.FailedCount, nil
 }
 
 func (s *Cdr) HandlePostXmlToAPI(cdr []byte) error {
@@ -132,7 +160,7 @@ func (s *Cdr) HandlePostXmlToAPI(cdr []byte) error {
 		Post(s.APICdrUrl)
 	if err != nil {
 		log.Error("Post Cdr Xml : ", err)
-		if err := s.HandleUpdateCdrRedis(cdrUuid, ""); err != nil {
+		if _, err := s.HandleUpdateCdrRedis(cdrUuid, ""); err != nil {
 			log.Error("Update CDR err : ", err)
 		}
 		if err := s.saveCdrToFile(cdrUuid, cdr); err != nil {
@@ -145,7 +173,7 @@ func (s *Cdr) HandlePostXmlToAPI(cdr []byte) error {
 				log.Error("HMDel CDR err : ", err)
 			}
 		} else {
-			if err := s.HandleUpdateCdrRedis(cdrUuid, ""); err != nil {
+			if _, err := s.HandleUpdateCdrRedis(cdrUuid, ""); err != nil {
 				log.Error("Update CDR err : ", err)
 			}
 			if err := s.saveCdrToFile(cdrUuid, cdr); err != nil {
@@ -181,4 +209,19 @@ func (s *Cdr) readCdrFromFile(uuid string) ([]byte, error) {
 
 func (s *Cdr) delCdrFile(uuid string) error {
 	return os.Remove(CDR_FAIL_DIR + uuid)
+}
+
+func sendMail(msg string) error {
+	portMail := "587"
+	errMsg := []byte("Subject: CDR Notification!\r\n" +
+		"\r\n" +
+		msg + ".\r\n")
+	auth := smtp.PlainAuth("", SMTP_USERNAME, SMTP_PASSWORD, SMTP_SERVER)
+	err := smtp.SendMail(SMTP_SERVER+":"+portMail, auth, SMTP_USERNAME, SMTP_RECEIVERS, errMsg)
+	if err != nil {
+		log.Error("Send mail err: ", err.Error())
+		return err
+	}
+	log.Info("Send mail success")
+	return nil
 }
