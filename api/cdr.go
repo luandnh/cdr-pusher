@@ -41,7 +41,7 @@ func (h *Cdr) CreateCDR(c *gin.Context) {
 		return
 	}
 	go func() {
-		if _, err := h.cdrService.HandlePostXmlToAPI(body); err != nil {
+		if err := h.cdrService.HandlePostXmlToAPI(body); err != nil {
 			log.Info("Post to API err : ", err)
 		}
 	}()

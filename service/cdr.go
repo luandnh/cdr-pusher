@@ -20,7 +20,7 @@ import (
 
 type (
 	ICdr interface {
-		HandlePostXmlToAPI(cdr []byte) (int64, error)
+		HandlePostXmlToAPI(cdr []byte) error
 		HandlePushCdr()
 	}
 	Cdr struct {
@@ -39,15 +39,10 @@ const (
 	CDR_FAIL_DIR  = "tmp/fail/"
 )
 
-var (
-	countPusher int64
-	// isNotified  bool = false
-	prevUUid string
-)
-
 var ctxBg = context.Background()
 
 func (s *Cdr) HandlePushCdr() {
+	var listUuidFail []string
 	listCdr, err := redis.Redis.HGetAll(CDR_FAIL_LIST)
 	if err != nil {
 		log.Error("Get list cdr failed: ", err)
@@ -63,26 +58,33 @@ func (s *Cdr) HandlePushCdr() {
 			continue
 		} else if cdrBytes == nil {
 			log.Error("Get cdr failed: nil")
-			if err := s.HandleUpdateCdrRedis(uuid, value); err != nil {
+			failCount, err := s.HandleUpdateCdrRedis(uuid, value)
+			log.Error("Fail count : ", failCount)
+			log.Error("Loi ne", err)
+			if err != nil {
 				log.Error("Update CDR err : ", err)
 			}
+			if failCount > 5 {
+				listUuidFail = append(listUuidFail, string("Uuid "+uuid+" => fail \r\n"))
+			}
+
 			continue
 		}
-		if countPusher, err := s.HandlePostXmlToAPI(cdrBytes); err != nil {
+		if err := s.HandlePostXmlToAPI(cdrBytes); err != nil {
 			log.Error("Post cdr failed err : ", err)
-			log.Info("Count ", countPusher)
-			// Xu ly loi va gui mail
-			if countPusher > 10 {
-				if prevUUid != uuid {
-					log.Info("UUID In sending email: ", uuid)
-					log.Error("Pusher loi: ", err.Error())
-					sendMail(uuid, err.Error())
-					prevUUid = uuid
-				}
-			}
-			if err := s.HandleUpdateCdrRedis(uuid, value); err != nil {
+			failCount, err := s.HandleUpdateCdrRedis(uuid, value)
+			log.Error("Fail count : ", failCount)
+			log.Error("Loi ne", err)
+			if err != nil {
 				log.Error("Update CDR err : ", err)
 			}
+			if failCount > 5 {
+				listUuidFail = append(listUuidFail, string("Uuid "+uuid+" => fail \r\n"))
+			}
+			// if failCount, err := s.HandleUpdateCdrRedis(uuid, value); err != nil {
+			// 	log.Error("Update CDR err : ", err)
+			// 	log.Error("Fail count: ", fail_count)
+			// }
 			continue
 		} else {
 			if err := redis.Redis.HDel(CDR_FAIL_LIST, uuid); err != nil {
@@ -95,17 +97,32 @@ func (s *Cdr) HandlePushCdr() {
 
 		}
 	}
+	var msg string
+	if len(listUuidFail) > 0 {
+		for _, value := range listUuidFail {
+			msg += value
+		}
+		log.Info("Msg ", msg)
+		if msg != "" {
+			err := sendMail(msg)
+			if err != nil {
+				log.Info("Err send mail ", err)
+			}
+			listUuidFail = nil
+		}
+	}
 }
 
-func (s *Cdr) HandleUpdateCdrRedis(uuid string, value string) error {
-	if len(uuid) < 1 {
-		return errors.New("uuid is nil")
-	}
+func (s *Cdr) HandleUpdateCdrRedis(uuid string, value string) (int, error) {
 	cdrRedis := new(model.CdrRedis)
+	if len(uuid) < 1 {
+		return cdrRedis.FailedCount, errors.New("uuid is nil")
+	}
+
 	if len(value) > 0 {
 		if err := json.Unmarshal([]byte(value), cdrRedis); err != nil {
 			log.Error("Unmarshal CDR err : ", err)
-			return err
+			return cdrRedis.FailedCount, err
 		}
 	}
 	cdrRedis.FailedCount += 1
@@ -113,23 +130,22 @@ func (s *Cdr) HandleUpdateCdrRedis(uuid string, value string) error {
 	val, err := json.Marshal(cdrRedis)
 	if err != nil {
 		log.Error("Marshal CDR err : ", err)
-		return err
+		return cdrRedis.FailedCount, err
 	}
 	data := []interface{}{uuid, string(val)}
 	if _, err := redis.Redis.HSet(CDR_FAIL_LIST, data); err != nil {
 		log.Error("HSet CDR err : ", err)
-		return err
+		return cdrRedis.FailedCount, err
 	}
-	return nil
+	return cdrRedis.FailedCount, nil
 }
 
-func (s *Cdr) HandlePostXmlToAPI(cdr []byte) (int64, error) {
+func (s *Cdr) HandlePostXmlToAPI(cdr []byte) error {
 	cdrUuid := ""
 	mv, err := mxj.NewMapXml(cdr)
 	if err != nil {
 		log.Error("Body to Map err: ", err)
-		countPusher = countPusher + 1
-		return countPusher, err
+		return err
 	} else {
 		variables, err := mv.ValueForKey("variables")
 		if err != nil {
@@ -137,7 +153,7 @@ func (s *Cdr) HandlePostXmlToAPI(cdr []byte) (int64, error) {
 		}
 		variablesMap, _ := variables.(map[string]interface{})
 		cdrUuid, _ = variablesMap["uuid"].(string)
-		log.Info(fmt.Sprintf("Push CDR uuid %s, pusher %d", cdrUuid, countPusher))
+		log.Info(fmt.Sprintf("Push CDR uuid %s", cdrUuid))
 	}
 	client := resty.New()
 	client.SetTimeout(time.Second * 3)
@@ -150,31 +166,31 @@ func (s *Cdr) HandlePostXmlToAPI(cdr []byte) (int64, error) {
 		Post(s.APICdrUrl)
 	if err != nil {
 		log.Error("Post Cdr Xml : ", err)
-		if err := s.HandleUpdateCdrRedis(cdrUuid, ""); err != nil {
+		if fail_count, err := s.HandleUpdateCdrRedis(cdrUuid, ""); err != nil {
 			log.Error("Update CDR err : ", err)
+			log.Error("Fail count: ", fail_count)
 		}
 		if err := s.saveCdrToFile(cdrUuid, cdr); err != nil {
 			log.Error("Write CDR err : ", err)
 		}
-		countPusher = countPusher + 1
-		return countPusher, err
+		return err
 	} else if (res.StatusCode() != http.StatusCreated) && (res.StatusCode() != http.StatusOK) {
 		if res.StatusCode() == http.StatusUnprocessableEntity {
 			if err := redis.Redis.HDel(CDR_FAIL_LIST, cdrUuid); err != nil {
 				log.Error("HMDel CDR err : ", err)
 			}
 		} else {
-			if err := s.HandleUpdateCdrRedis(cdrUuid, ""); err != nil {
+			if fail_count, err := s.HandleUpdateCdrRedis(cdrUuid, ""); err != nil {
 				log.Error("Update CDR err : ", err)
+				log.Error("Fail count: ", fail_count)
 			}
 			if err := s.saveCdrToFile(cdrUuid, cdr); err != nil {
 				log.Error("Write CDR err : ", err)
 			}
 		}
-		countPusher = countPusher + 1
-		return countPusher, errors.New("post fail")
+		return errors.New("post fail")
 	} else {
-		return countPusher, nil
+		return nil
 	}
 
 }
@@ -203,7 +219,7 @@ func (s *Cdr) delCdrFile(uuid string) error {
 	return os.Remove(CDR_FAIL_DIR + uuid)
 }
 
-func sendMail(uuid string, msg string) error {
+func sendMail(msg string) error {
 	addMail := "noreply@tel4vn.com"
 	passMail := "klcszlredhdlsmww"
 	hostMail := "smtp.gmail.com"
@@ -211,7 +227,7 @@ func sendMail(uuid string, msg string) error {
 	toList := []string{"tuananh@tel4vn.com"}
 	errMsg := []byte("Subject: CDR Notification!\r\n" +
 		"\r\n" +
-		"Uuid " + uuid + " => error: " + msg + ".\r\n")
+		msg + ".\r\n")
 	auth := smtp.PlainAuth("", addMail, passMail, hostMail)
 	err := smtp.SendMail(hostMail+":"+portMail, auth, addMail, toList, errMsg)
 	if err != nil {
