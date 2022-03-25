@@ -5,11 +5,22 @@
     "log_level": "debug",
     "log_file": "tmp/console.log",
     "redis": "enabled",
+    "notify": [
+      "mail"
+    ],
     "api_cdr_url": "https://webhook.pusher"
   },
   "redis": {
     "address": "localhost:6379",
     "database": 0,
     "password": ""
+  },
+  "smtp": {
+    "server": "smtp.gmail.com",
+    "username": "",
+    "password": "",
+    "receivers": [
+      ""
+    ]
   }
 }

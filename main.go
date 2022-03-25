@@ -33,6 +33,7 @@ type Config struct {
 	LogFile   string
 	DB        string
 	Redis     string
+	Notify    []string
 	APICdrUrl string
 }
 
@@ -57,6 +58,7 @@ func init() {
 		DB:        viper.GetString(`main.db`),
 		Redis:     viper.GetString(`main.redis`),
 		APICdrUrl: viper.GetString(`main.api_cdr_url`),
+		Notify:    viper.GetStringSlice(`main.notify`),
 	}
 	if cfg.Redis == "enabled" {
 		var err error
@@ -72,6 +74,14 @@ func init() {
 		})
 		if err != nil {
 			panic(err)
+		}
+	}
+	for _, v := range cfg.Notify {
+		if v == "mail" {
+			service.SMTP_SERVER = viper.GetString("smtp.server")
+			service.SMTP_USERNAME = viper.GetString("smtp.username")
+			service.SMTP_PASSWORD = viper.GetString("smtp.password")
+			service.SMTP_RECEIVERS = viper.GetStringSlice("smtp.receivers")
 		}
 	}
 	config = cfg
