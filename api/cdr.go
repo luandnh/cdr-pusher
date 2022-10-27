@@ -10,10 +10,10 @@ import (
 )
 
 type Cdr struct {
-	cdrService service.ICdr
+	cdrService service.CDR
 }
 
-func APICdr(r *gin.Engine, cdr service.ICdr) {
+func APICdr(r *gin.Engine, cdr service.CDR) {
 	handler := &Cdr{
 		cdrService: cdr,
 	}
@@ -24,7 +24,7 @@ func APICdr(r *gin.Engine, cdr service.ICdr) {
 }
 func (h *Cdr) CreateCDR(c *gin.Context) {
 	if c.Request.Body == nil {
-		log.Error("Cdr", "CreateCDR", "Request body null")
+		log.Error("request body null")
 		c.JSON(http.StatusUnprocessableEntity, gin.H{
 			"error": http.StatusText(http.StatusUnprocessableEntity),
 		})
@@ -33,7 +33,7 @@ func (h *Cdr) CreateCDR(c *gin.Context) {
 	}
 	body, err := ioutil.ReadAll(c.Request.Body)
 	if err != nil {
-		log.Error("Cdr", "CreateCDR", err.Error())
+		log.Error(err.Error())
 		c.JSON(http.StatusUnprocessableEntity, gin.H{
 			"error": http.StatusText(http.StatusUnprocessableEntity),
 		})

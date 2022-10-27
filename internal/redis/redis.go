@@ -2,7 +2,6 @@ package redis
 
 import (
 	"cdr-pusher/common/log"
-	IR "cdr-pusher/internal/redis"
 	"context"
 	"errors"
 	"time"
@@ -12,7 +11,30 @@ import (
 
 var ctx = context.Background()
 
-type Redis struct {
+type IRedis interface {
+	GetClient() *redis.Client
+	Connect() error
+	Ping() error
+	Set(key string, value interface{}) (string, error)
+	SetTTL(key string, value interface{}, t time.Duration) (string, error)
+	Get(key string) (string, error)
+	IsExisted(key string) (bool, error)
+	IsHExisted(list, key string) (bool, error)
+	HGet(list, key string) (string, error)
+	HGetAll(list string) (map[string]string, error)
+	HSet(key string, values []interface{}) (int64, error)
+	HMGet(key string, fields ...string) ([]interface{}, error)
+	HMSet(key string, values ...interface{}) error
+	HMDel(key string, fields ...string) error
+	FLUSHALL() interface{}
+	Del(key []string) error
+	HDel(key string, fields ...string) error
+	GetKeysPattern(pattern string) ([]string, error)
+}
+
+var Redis IRedis
+
+type RedisClient struct {
 	Client *redis.Client
 	config Config
 }
@@ -28,8 +50,8 @@ type Config struct {
 	WriteTimeout int
 }
 
-func NewRedis(config Config) (IR.IRedis, error) {
-	r := &Redis{
+func NewRedis(config Config) (IRedis, error) {
+	r := &RedisClient{
 		config: config,
 	}
 	if err := r.Connect(); err != nil {
@@ -38,11 +60,11 @@ func NewRedis(config Config) (IR.IRedis, error) {
 	return r, nil
 }
 
-func (r *Redis) GetClient() *redis.Client {
+func (r *RedisClient) GetClient() *redis.Client {
 	return r.Client
 }
 
-func (r *Redis) Connect() error {
+func (r *RedisClient) Connect() error {
 	Client := redis.NewClient(&redis.Options{
 		Addr:         r.config.Addr,
 		Password:     r.config.Password,
@@ -55,149 +77,103 @@ func (r *Redis) Connect() error {
 	})
 	str, err := Client.Ping(ctx).Result()
 	if err != nil {
-		log.Fatal("Redis", "Connect", err.Error())
+		log.Fatal(err)
 		return err
 	}
-	log.Info("Redis", "Connect", str)
+	log.Info(str)
 	r.Client = Client
 	return nil
 }
 
-func (r *Redis) Ping() error {
+func (r *RedisClient) Ping() error {
 	_, err := r.Client.Ping(ctx).Result()
-	if err != nil {
-		log.Error("Redis", "Ping", err.Error())
-	}
 	return err
 }
 
-func (r *Redis) Set(key string, value interface{}) (string, error) {
+func (r *RedisClient) Set(key string, value interface{}) (string, error) {
 	ret, err := r.Client.Set(ctx, key, value, 0).Result()
-	if err != nil {
-		log.Error("Redis", "Set", err.Error())
-	}
 	return ret, err
 }
 
-//Set - Set a value with key to Redis DB
-func (r *Redis) SetTTL(key string, value interface{}, t time.Duration) (string, error) {
+// Set - Set a value with key to Redis DB
+func (r *RedisClient) SetTTL(key string, value interface{}, t time.Duration) (string, error) {
 	ret, err := r.Client.Set(ctx, key, value, t).Result()
-	if err != nil {
-		log.Error("Redis", "SetTTL", err.Error())
-	}
 	return ret, err
 }
 
-func (r *Redis) Get(key string) (string, error) {
+func (r *RedisClient) Get(key string) (string, error) {
 	ret, err := r.Client.Get(ctx, key).Result()
-	if err != nil {
-		log.Error("Redis", "Get", err.Error())
-	}
 	return ret, err
 }
 
-func (r *Redis) IsExisted(key string) (bool, error) {
+func (r *RedisClient) IsExisted(key string) (bool, error) {
 	res, err := r.Client.Exists(ctx, key).Result()
 	if res == 0 || err != nil {
-		if err != nil {
-			log.Error("Redis", "IsExisted", err.Error())
-		}
 		return false, err
 	}
 	return true, nil
 }
 
-func (r *Redis) IsHExisted(list, key string) (bool, error) {
+func (r *RedisClient) IsHExisted(list, key string) (bool, error) {
 	res, err := r.Client.HExists(ctx, list, key).Result()
 	if res == false || err != nil {
-		if err != nil {
-			log.Error("Redis", "IsExisted", err.Error())
-		}
 		return false, err
 	}
 	return true, nil
 }
 
-func (r *Redis) HGet(list, key string) (string, error) {
+func (r *RedisClient) HGet(list, key string) (string, error) {
 	ret, err := r.Client.HGet(ctx, list, key).Result()
-	if err != nil {
-		log.Error("Redis", "Get", err.Error())
-	}
 	return ret, err
 }
 
-func (r *Redis) HGetAll(list string) (map[string]string, error) {
+func (r *RedisClient) HGetAll(list string) (map[string]string, error) {
 	ret, err := r.Client.HGetAll(ctx, list).Result()
-	if err != nil {
-		log.Error("Redis", "HGetAll", err.Error())
-	}
 	return ret, err
 }
 
-func (r *Redis) HSet(key string, values []interface{}) (int64, error) {
+func (r *RedisClient) HSet(key string, values []interface{}) (int64, error) {
 	ret, err := r.Client.HSet(ctx, key, values...).Result()
-	if err != nil {
-		log.Error("Redis", "HSet", err.Error())
-	}
 	return ret, err
 }
 
-func (r *Redis) Del(key []string) error {
+func (r *RedisClient) Del(key []string) error {
 	err := r.Client.Del(ctx, key...).Err()
-	if err != nil {
-		log.Error("Redis", "Del", err.Error())
-	}
 	return err
 }
 
-func (r *Redis) HMSet(key string, values ...interface{}) error {
+func (r *RedisClient) HMSet(key string, values ...interface{}) error {
 	ret, err := r.Client.HMSet(ctx, key, values...).Result()
 	if err != nil {
-		log.Error("Redis", "HMSet", err.Error())
 		return err
 	}
 	if !ret {
 		err = errors.New("HashMap Set failed")
-		log.Error("Redis", "HMSet", err.Error())
 	}
 	return err
 }
 
-func (r *Redis) HMDel(key string, fields ...string) error {
+func (r *RedisClient) HMDel(key string, fields ...string) error {
 	err := r.Client.HDel(ctx, key, fields...).Err()
-	if err != nil {
-		log.Error("Redis", "HMDel", err.Error())
-	}
 	return err
 }
 
-func (r *Redis) FLUSHALL() interface{} {
+func (r *RedisClient) FLUSHALL() interface{} {
 	ret := r.Client.FlushAll(ctx)
 	return ret
 }
 
-func (r *Redis) HMGet(key string, fields ...string) ([]interface{}, error) {
+func (r *RedisClient) HMGet(key string, fields ...string) ([]interface{}, error) {
 	ret, err := r.Client.HMGet(ctx, key, fields...).Result()
-	if err != nil {
-		log.Error("Redis", "HMGet", err.Error())
-		return ret, err
-	}
 	return ret, err
 }
 
-func (r *Redis) HDel(key string, fields ...string) error {
+func (r *RedisClient) HDel(key string, fields ...string) error {
 	err := r.Client.HDel(ctx, key, fields...).Err()
-	if err != nil {
-		log.Error("Redis", "HDel", err.Error())
-	}
 	return err
 }
 
-func (r *Redis) GetKeysPattern(pattern string) ([]string, error) {
+func (r *RedisClient) GetKeysPattern(pattern string) ([]string, error) {
 	ret, err := r.Client.Keys(ctx, pattern).Result()
-	if err != nil {
-		log.Error("Redis", "HMGet", err.Error())
-		return ret, err
-	}
 	return ret, err
 }

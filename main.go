@@ -1,23 +1,13 @@
 package main
 
 import (
-	/// THIRD PARTY PACKAGE
-
+	api "cdr-pusher/api"
+	"cdr-pusher/internal/redis"
 	"cdr-pusher/service"
-	"time"
-
-	IRedis "cdr-pusher/internal/redis"
-	redis "cdr-pusher/internal/redis/driver"
 	"io"
 	"os"
 	"path/filepath"
-
-	/// PACKAGE OF POSTGRESQL
-
-	/// PACKAGE OF RABBITMQ
-	api "cdr-pusher/api"
-
-	/// CALLBACK
+	"time"
 
 	"github.com/caarlos0/env"
 	"github.com/go-co-op/gocron"
@@ -62,7 +52,7 @@ func init() {
 	}
 	if cfg.Redis == "enabled" {
 		var err error
-		IRedis.Redis, err = redis.NewRedis(redis.Config{
+		redis.Redis, err = redis.NewRedis(redis.Config{
 			Addr:         viper.GetString(`redis.address`),
 			Password:     viper.GetString(`redis.password`),
 			DB:           viper.GetInt(`redis.database`),
@@ -76,14 +66,14 @@ func init() {
 			panic(err)
 		}
 	}
-	for _, v := range cfg.Notify {
-		if v == "mail" {
-			service.SMTP_SERVER = viper.GetString("smtp.server")
-			service.SMTP_USERNAME = viper.GetString("smtp.username")
-			service.SMTP_PASSWORD = viper.GetString("smtp.password")
-			service.SMTP_RECEIVERS = viper.GetStringSlice("smtp.receivers")
-		}
-	}
+	// for _, v := range cfg.Notify {
+	// 	if v == "mail" {
+	// 		service.SMTP_SERVER = viper.GetString("smtp.server")
+	// 		service.SMTP_USERNAME = viper.GetString("smtp.username")
+	// 		service.SMTP_PASSWORD = viper.GetString("smtp.password")
+	// 		service.SMTP_RECEIVERS = viper.GetStringSlice("smtp.receivers")
+	// 	}
+	// }
 	config = cfg
 }
 
@@ -95,19 +85,22 @@ func main() {
 
 	server := api.NewServer()
 	//------ ADD CONTROLLER
-	cdrService := service.NewCdr(config.APICdrUrl)
+	cdrService := service.NewCDR(config.APICdrUrl)
 	api.APICdr(server.Engine, cdrService)
-	s4 := gocron.NewScheduler(time.UTC)
-	s4.SetMaxConcurrentJobs(1, gocron.RescheduleMode)
-	s4.Every(15).Seconds().Do(cdrService.HandlePushCdr)
-	s4.StartAsync()
-	defer s4.Clear()
+
+	s1 := gocron.NewScheduler(time.UTC)
+	s1.SetMaxConcurrentJobs(1, gocron.RescheduleMode)
+	s1.Every(30).Minutes().Do(cdrService.HandlePushBack)
+	s1.StartAsync()
+	defer s1.Clear()
+
 	server.Start(config.Port)
 }
 
 func setAppLogger(cfg Config, file *os.File) {
 	log.SetFormatter(&log.TextFormatter{
 		FullTimestamp: true,
+		ForceColors:   true,
 	})
 	// log.SetFormatter(&log.JSONFormatter{})
 	switch cfg.LogLevel {
@@ -129,7 +122,6 @@ func setAppLogger(cfg Config, file *os.File) {
 		if file != nil {
 			log.SetOutput(io.MultiWriter(os.Stdout, file))
 		} else {
-			log.Error("main ", "Log File "+cfg.LogFile+" error")
 			log.SetOutput(os.Stdout)
 		}
 	default:
