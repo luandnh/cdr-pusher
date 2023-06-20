@@ -1,10 +1,9 @@
 module cdr-pusher
 
-go 1.19
+go 1.20
 
 require (
 	github.com/caarlos0/env v3.5.0+incompatible
-	github.com/clbanning/mxj/v2 v2.5.6
 	github.com/gin-gonic/gin v1.8.1
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/go-resty/resty/v2 v2.7.0

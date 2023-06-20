@@ -4,12 +4,13 @@ import (
 	"cdr-pusher/common/log"
 	"cdr-pusher/internal/redis"
 	"crypto/tls"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"reflect"
 	"time"
 
-	"github.com/clbanning/mxj/v2"
 	"github.com/go-resty/resty/v2"
 )
 
@@ -62,24 +63,15 @@ func NewHTTPClient() *resty.Client {
 	return client
 }
 
-func (s *CDR) HandlePostXmlToAPI(cdr []byte) error {
-	cdrUuid := ""
-	mv, err := mxj.NewMapXml(cdr)
-	if err != nil {
-		log.Error("xml err: ", err)
-		return err
-	} else {
-		variables, err := mv.ValueForKey("variables")
-		if err != nil {
-			log.Error("xml err: ", err)
-		}
-		variablesMap, _ := variables.(map[string]interface{})
-		cdrUuid, _ = variablesMap["uuid"].(string)
+func (s *CDR) PostSBCLog(cdr map[string]any) error {
+	cdrUuid, ok := cdr["callid"].(string)
+	if !ok {
+		return errors.New("invalid callid")
 	}
 	return s.pushToAPI(cdrUuid, cdr, false)
 }
 
-func (s *CDR) pushToAPI(cdrUuid string, cdr []byte, isAgain bool) error {
+func (s *CDR) pushToAPI(cdrUuid string, cdr map[string]any, isAgain bool) error {
 	client := NewHTTPClient().
 		AddRetryHook(func(r *resty.Response, err error) {
 			if err != nil {
@@ -92,8 +84,8 @@ func (s *CDR) pushToAPI(cdrUuid string, cdr []byte, isAgain bool) error {
 			}
 		})
 	r, err := client.R().
-		SetHeader("Content-Type", "application/xml").
-		SetBody(string(cdr)).
+		SetHeader("Content-Type", "application/json").
+		SetBody(cdr).
 		Post(s.APICdrUrl)
 	if err != nil {
 		log.Errorf("push cdr fail: %s", cdrUuid)
@@ -107,8 +99,13 @@ func (s *CDR) pushToAPI(cdrUuid string, cdr []byte, isAgain bool) error {
 	return nil
 }
 
-func addToRedis(cdrUuid string, value []byte) {
-	data := []interface{}{cdrUuid, string(value)}
+func addToRedis(cdrUuid string, value map[string]any) {
+	b, err := json.Marshal(value)
+	if err != nil {
+		log.Error(err)
+		return
+	}
+	data := []interface{}{cdrUuid, string(b)}
 	if _, err := redis.Redis.HSet(R_KEY, data); err != nil {
 		log.Error(err)
 	}
@@ -119,7 +116,12 @@ func removeFromRedis(cdrUuid string) {
 	}
 }
 
-func saveToFile(uuid string, value []byte) error {
+func saveToFile(uuid string, value map[string]any) error {
+	b, err := json.Marshal(value)
+	if err != nil {
+		log.Error(err)
+		return err
+	}
 	if _, err := os.Stat(CDR_FAIL_DIR); os.IsNotExist(err) {
 		_ = os.MkdirAll(CDR_FAIL_DIR, 0755)
 	}
@@ -128,7 +130,7 @@ func saveToFile(uuid string, value []byte) error {
 		return err
 	}
 	defer f.Close()
-	if _, err := f.Write(value); err != nil {
+	if _, err := f.Write(b); err != nil {
 		return err
 	} else {
 		return nil
@@ -143,7 +145,12 @@ func (s *CDR) HandlePushBack() {
 		return
 	}
 	for k, v := range values {
-		s.pushToAPI(k, []byte(v), true)
+		cdr := make(map[string]any)
+		if err := json.Unmarshal([]byte(v), &cdr); err != nil {
+			log.Error(err)
+			continue
+		}
+		s.pushToAPI(k, cdr, true)
 	}
 	log.Info("end push back")
 }

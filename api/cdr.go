@@ -3,7 +3,6 @@ package api
 import (
 	"cdr-pusher/common/log"
 	"cdr-pusher/service"
-	"io/ioutil"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -17,7 +16,7 @@ func APICdr(r *gin.Engine, cdr service.CDR) {
 	handler := &Cdr{
 		cdrService: cdr,
 	}
-	Group := r.Group("v1/cdr")
+	Group := r.Group("v1/sbclog")
 	{
 		Group.POST("", handler.CreateCDR)
 	}
@@ -31,17 +30,16 @@ func (h *Cdr) CreateCDR(c *gin.Context) {
 		c.Abort()
 		return
 	}
-	body, err := ioutil.ReadAll(c.Request.Body)
-	if err != nil {
-		log.Error(err.Error())
+	body := map[string]any{}
+	if err := c.BindJSON(&body); err != nil {
+		log.Error(err)
 		c.JSON(http.StatusUnprocessableEntity, gin.H{
 			"error": http.StatusText(http.StatusUnprocessableEntity),
 		})
-		c.Abort()
 		return
 	}
 	go func() {
-		if err := h.cdrService.HandlePostXmlToAPI(body); err != nil {
+		if err := h.cdrService.PostSBCLog(body); err != nil {
 			log.Info("Post to API err : ", err)
 		}
 	}()
